@@ -192,6 +192,7 @@ func newStore(c *kubernetes.Client, codec runtime.Codec, newFunc, newListFunc fu
 		resourcePrefix: resourcePrefix,
 		newListFunc:    newListFunc,
 	}
+	c.Kubernetes = NewKubernetesEtcdLatencyTracker(c.Kubernetes)
 
 	w.getCurrentStorageRV = func(ctx context.Context) (uint64, error) {
 		return s.GetCurrentResourceVersion(ctx)
