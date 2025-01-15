@@ -618,7 +618,7 @@ func getNewItemFunc(listObj runtime.Object, v reflect.Value) func() runtime.Obje
 	}
 }
 
-func (s *store) Count(key string) (int64, error) {
+func (s *store) Count(ctx context.Context, key string) (int64, error) {
 	preparedKey, err := s.prepareKey(key)
 	if err != nil {
 		return 0, err

@@ -3130,7 +3130,7 @@ func RunTestCount(ctx context.Context, t *testing.T, store storage.Interface) {
 		}
 	}
 
-	resourceACountGot, err := store.Count(resourceA)
+	resourceACountGot, err := store.Count(context.Background(), resourceA)
 	if err != nil {
 		t.Fatalf("store.Count failed: %v", err)
 	}
