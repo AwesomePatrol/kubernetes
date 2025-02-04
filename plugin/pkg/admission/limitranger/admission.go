@@ -28,7 +28,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -163,27 +162,12 @@ func (l *LimitRanger) GetLimitRanges(a admission.Attributes) ([]*corev1.LimitRan
 		return nil, admission.NewForbidden(a, fmt.Errorf("unable to %s %v at this time because there was an error enforcing limit ranges", a.GetOperation(), a.GetResource()))
 	}
 
-	// if there are no items held in our indexer, check our live-lookup LRU, if that misses, do the live lookup to prime it.
+	// if there are no items held in our indexer, check our live-lookup LRU.
 	if len(items) == 0 {
 		lruItemObj, ok := l.liveLookupCache.Get(a.GetNamespace())
 		if !ok || lruItemObj.(liveLookupEntry).expiry.Before(time.Now()) {
-			// Fixed: #22422
-			// use singleflight to alleviate simultaneous calls to
-			lruItemObj, err, _ = l.group.Do(a.GetNamespace(), func() (interface{}, error) {
-				liveList, err := l.client.CoreV1().LimitRanges(a.GetNamespace()).List(context.TODO(), metav1.ListOptions{ResourceVersion: "0"})
-				if err != nil {
-					return nil, admission.NewForbidden(a, err)
-				}
-				newEntry := liveLookupEntry{expiry: time.Now().Add(l.liveTTL)}
-				for i := range liveList.Items {
-					newEntry.items = append(newEntry.items, &liveList.Items[i])
-				}
-				l.liveLookupCache.Add(a.GetNamespace(), newEntry)
-				return newEntry, nil
-			})
-			if err != nil {
-				return nil, err
-			}
+			lruItemObj = liveLookupEntry{expiry: time.Now().Add(l.liveTTL)}
+			l.liveLookupCache.Add(a.GetNamespace(), lruItemObj)
 		}
 		lruEntry := lruItemObj.(liveLookupEntry)
 

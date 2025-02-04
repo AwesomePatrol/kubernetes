@@ -20,17 +20,13 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/admission"
 	genericadmissioninitializer "k8s.io/apiserver/pkg/admission/initializer"
 	admissiontesting "k8s.io/apiserver/pkg/admission/testing"
@@ -38,7 +34,6 @@ import (
 	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
-	core "k8s.io/client-go/testing"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/kubernetes/pkg/features"
 
@@ -784,12 +779,15 @@ func TestPodLimitFuncApplyDefault(t *testing.T) {
 
 func TestLimitRangerIgnoresSubresource(t *testing.T) {
 	limitRange := validLimitRangeNoDefaults()
-	mockClient := newMockClientForTest([]corev1.LimitRange{limitRange})
-	handler, informerFactory, err := newHandlerForTest(mockClient)
+	mockClient := fake.NewClientset()
+	informerFactory, err := newInformerForTest(mockClient, []runtime.Object{&limitRange})
+	if err != nil {
+		t.Fatalf("Failed to create new informer: %v", err)
+	}
+	handler, err := newHandlerForTest(mockClient, informerFactory)
 	if err != nil {
 		t.Errorf("unexpected error initializing handler: %v", err)
 	}
-	informerFactory.Start(wait.NeverStop)
 
 	testPod := validPod("testPod", 1, api.ResourceRequirements{})
 	err = admissiontesting.WithReinvocationTesting(t, handler).Admit(context.TODO(), admission.NewAttributesRecord(&testPod, nil, api.Kind("Pod").WithVersion("version"), limitRange.Namespace, "testPod", api.Resource("pods").WithVersion("version"), "", admission.Create, &metav1.CreateOptions{}, false, nil), nil)
@@ -813,12 +811,15 @@ func TestLimitRangerIgnoresSubresource(t *testing.T) {
 
 func TestLimitRangerAllowPodResize(t *testing.T) {
 	limitRange := validLimitRangeNoDefaults()
-	mockClient := newMockClientForTest([]corev1.LimitRange{limitRange})
-	handler, informerFactory, err := newHandlerForTest(mockClient)
+	mockClient := fake.NewClientset()
+	informerFactory, err := newInformerForTest(mockClient, []runtime.Object{&limitRange})
+	if err != nil {
+		t.Fatalf("Failed to create new informer: %v", err)
+	}
+	handler, err := newHandlerForTest(mockClient, informerFactory)
 	if err != nil {
 		t.Errorf("unexpected error initializing handler: %v", err)
 	}
-	informerFactory.Start(wait.NeverStop)
 
 	testPod := validPod("testPod", 1, api.ResourceRequirements{})
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.InPlacePodVerticalScaling, true)
@@ -830,12 +831,15 @@ func TestLimitRangerAllowPodResize(t *testing.T) {
 
 func TestLimitRangerAdmitPod(t *testing.T) {
 	limitRange := validLimitRangeNoDefaults()
-	mockClient := newMockClientForTest([]corev1.LimitRange{limitRange})
-	handler, informerFactory, err := newHandlerForTest(mockClient)
+	mockClient := fake.NewClientset()
+	informerFactory, err := newInformerForTest(mockClient, []runtime.Object{&limitRange})
+	if err != nil {
+		t.Fatalf("Failed to create new informer: %v", err)
+	}
+	handler, err := newHandlerForTest(mockClient, informerFactory)
 	if err != nil {
 		t.Errorf("unexpected error initializing handler: %v", err)
 	}
-	informerFactory.Start(wait.NeverStop)
 
 	testPod := validPod("testPod", 1, api.ResourceRequirements{})
 	err = admissiontesting.WithReinvocationTesting(t, handler).Admit(context.TODO(), admission.NewAttributesRecord(&testPod, nil, api.Kind("Pod").WithVersion("version"), limitRange.Namespace, "testPod", api.Resource("pods").WithVersion("version"), "", admission.Create, &metav1.CreateOptions{}, false, nil), nil)
@@ -866,35 +870,27 @@ func TestLimitRangerAdmitPod(t *testing.T) {
 	}
 }
 
-// newMockClientForTest creates a mock client that returns a client configured for the specified list of limit ranges
-func newMockClientForTest(limitRanges []corev1.LimitRange) *fake.Clientset {
-	mockClient := &fake.Clientset{}
-	mockClient.AddReactor("list", "limitranges", func(action core.Action) (bool, runtime.Object, error) {
-		limitRangeList := &corev1.LimitRangeList{
-			ListMeta: metav1.ListMeta{
-				ResourceVersion: fmt.Sprintf("%d", len(limitRanges)),
-			},
+// newInformerForTest creates an informer that returns the specified list of limit ranges.
+func newInformerForTest(mockClient *fake.Clientset, limitRanges []runtime.Object) (informers.SharedInformerFactory, error) {
+	informerFactory := informers.NewSharedInformerFactory(mockClient, 0)
+	for _, lr := range limitRanges {
+		if err := informerFactory.Core().V1().LimitRanges().Informer().GetStore().Add(lr); err != nil {
+			return nil, fmt.Errorf("add to informer: %v", err)
 		}
-		for index, value := range limitRanges {
-			value.ResourceVersion = fmt.Sprintf("%d", index)
-			limitRangeList.Items = append(limitRangeList.Items, value)
-		}
-		return true, limitRangeList, nil
-	})
-	return mockClient
+	}
+	return informerFactory, nil
 }
 
 // newHandlerForTest returns a handler configured for testing.
-func newHandlerForTest(c clientset.Interface) (*LimitRanger, informers.SharedInformerFactory, error) {
-	f := informers.NewSharedInformerFactory(c, 5*time.Minute)
+func newHandlerForTest(c clientset.Interface, f informers.SharedInformerFactory) (*LimitRanger, error) {
 	handler, err := NewLimitRanger(&DefaultLimitRangerActions{})
 	if err != nil {
-		return nil, f, err
+		return nil, err
 	}
 	pluginInitializer := genericadmissioninitializer.New(c, nil, f, nil, nil, nil, nil)
 	pluginInitializer.Initialize(handler)
 	err = admission.ValidateInitialization(handler)
-	return handler, f, err
+	return handler, err
 }
 
 func validPersistentVolumeClaim(name string, resources api.VolumeResourceRequirements) api.PersistentVolumeClaim {
@@ -955,109 +951,5 @@ func TestPersistentVolumeClaimLimitFunc(t *testing.T) {
 		if err == nil {
 			t.Errorf("Expected error for pvc: %s", test.pvc.Name)
 		}
-	}
-}
-
-// TestLimitRanger_GetLimitRangesFixed22422 Fixed Admission controllers can cause unnecessary significant load on apiserver #22422
-func TestLimitRanger_GetLimitRangesFixed22422(t *testing.T) {
-	limitRange := validLimitRangeNoDefaults()
-	limitRanges := []corev1.LimitRange{limitRange}
-
-	mockClient := &fake.Clientset{}
-
-	var (
-		testCount  int64
-		test1Count int64
-	)
-	mockClient.AddReactor("list", "limitranges", func(action core.Action) (bool, runtime.Object, error) {
-		switch action.GetNamespace() {
-		case "test":
-			atomic.AddInt64(&testCount, 1)
-		case "test1":
-			atomic.AddInt64(&test1Count, 1)
-		default:
-			t.Error("unexpected namespace")
-		}
-
-		limitRangeList := &corev1.LimitRangeList{
-			ListMeta: metav1.ListMeta{
-				ResourceVersion: fmt.Sprintf("%d", len(limitRanges)),
-			},
-		}
-		for index, value := range limitRanges {
-			value.ResourceVersion = fmt.Sprintf("%d", index)
-			value.Namespace = action.GetNamespace()
-			limitRangeList.Items = append(limitRangeList.Items, value)
-		}
-		// make the handler slow so concurrent calls exercise the singleflight
-		time.Sleep(time.Second)
-		return true, limitRangeList, nil
-	})
-
-	handler, _, err := newHandlerForTest(mockClient)
-	if err != nil {
-		t.Errorf("unexpected error initializing handler: %v", err)
-	}
-
-	attributes := admission.NewAttributesRecord(nil, nil, api.Kind("kind").WithVersion("version"), "test", "name", api.Resource("resource").WithVersion("version"), "subresource", admission.Create, &metav1.CreateOptions{}, false, nil)
-
-	attributesTest1 := admission.NewAttributesRecord(nil, nil, api.Kind("kind").WithVersion("version"), "test1", "name", api.Resource("resource").WithVersion("version"), "subresource", admission.Create, &metav1.CreateOptions{}, false, nil)
-
-	wg := sync.WaitGroup{}
-	for i := 0; i < 10; i++ {
-		wg.Add(2)
-		// simulating concurrent calls after a cache failure
-		go func() {
-			defer wg.Done()
-			ret, err := handler.GetLimitRanges(attributes)
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-			for _, c := range ret {
-				if c.Namespace != attributes.GetNamespace() {
-					t.Errorf("Expected %s namespace, got %s", attributes.GetNamespace(), c.Namespace)
-				}
-			}
-		}()
-
-		// simulation of different namespaces is not a call
-		go func() {
-			defer wg.Done()
-			ret, err := handler.GetLimitRanges(attributesTest1)
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-			for _, c := range ret {
-				if c.Namespace != attributesTest1.GetNamespace() {
-					t.Errorf("Expected %s namespace, got %s", attributesTest1.GetNamespace(), c.Namespace)
-				}
-			}
-		}()
-	}
-
-	// and here we wait for all the goroutines
-	wg.Wait()
-	// since all the calls with the same namespace will be holded, they must be catched on the singleflight group,
-	// There are two different sets of namespace calls
-	// hence only 2
-	if testCount != 1 {
-		t.Errorf("Expected 1 limit range call, got %d", testCount)
-	}
-	if test1Count != 1 {
-		t.Errorf("Expected 1 limit range call, got %d", test1Count)
-	}
-
-	// invalidate the cache
-	handler.liveLookupCache.Remove(attributes.GetNamespace())
-	_, err = handler.GetLimitRanges(attributes)
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-
-	if testCount != 2 {
-		t.Errorf("Expected 2 limit range call, got %d", testCount)
-	}
-	if test1Count != 1 {
-		t.Errorf("Expected 1 limit range call, got %d", test1Count)
 	}
 }

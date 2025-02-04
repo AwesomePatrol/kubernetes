@@ -112,27 +112,12 @@ func (e *quotaAccessor) GetQuotas(namespace string) ([]corev1.ResourceQuota, err
 		return nil, fmt.Errorf("error resolving quota: %v", err)
 	}
 
-	// if there are no items held in our indexer, check our live-lookup LRU, if that misses, do the live lookup to prime it.
+	// if there are no items held in our indexer, check our live-lookup LRU.
 	if len(items) == 0 {
 		lruItemObj, ok := e.liveLookupCache.Get(namespace)
 		if !ok || lruItemObj.(liveLookupEntry).expiry.Before(time.Now()) {
-			// use singleflight.Group to avoid flooding the apiserver with repeated
-			// requests. See #22422 for details.
-			lruItemObj, err, _ = e.group.Do(namespace, func() (interface{}, error) {
-				liveList, err := e.client.CoreV1().ResourceQuotas(namespace).List(context.TODO(), metav1.ListOptions{ResourceVersion: "0"})
-				if err != nil {
-					return nil, err
-				}
-				newEntry := liveLookupEntry{expiry: time.Now().Add(e.liveTTL)}
-				for i := range liveList.Items {
-					newEntry.items = append(newEntry.items, &liveList.Items[i])
-				}
-				e.liveLookupCache.Add(namespace, newEntry)
-				return newEntry, nil
-			})
-			if err != nil {
-				return nil, err
-			}
+			lruItemObj = liveLookupEntry{expiry: time.Now().Add(e.liveTTL)}
+			e.liveLookupCache.Add(namespace, lruItemObj)
 		}
 		lruEntry := lruItemObj.(liveLookupEntry)
 		for i := range lruEntry.items {
