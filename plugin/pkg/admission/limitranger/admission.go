@@ -24,7 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -38,7 +37,6 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/utils/lru"
 
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/features"
@@ -63,13 +61,6 @@ type LimitRanger struct {
 	client  kubernetes.Interface
 	actions LimitRangerActions
 	lister  corev1listers.LimitRangeLister
-
-	// liveLookups holds the last few live lookups we've done to help ammortize cost on repeated lookup failures.
-	// This let's us handle the case of latent caches, by looking up actual results for a namespace on cache miss/no results.
-	// We track the lookup result here so that for repeated requests, we don't look it up very often.
-	liveLookupCache *lru.Cache
-	group           singleflight.Group
-	liveTTL         time.Duration
 }
 
 var _ admission.MutationInterface = &LimitRanger{}
@@ -161,36 +152,18 @@ func (l *LimitRanger) GetLimitRanges(a admission.Attributes) ([]*corev1.LimitRan
 	if err != nil {
 		return nil, admission.NewForbidden(a, fmt.Errorf("unable to %s %v at this time because there was an error enforcing limit ranges", a.GetOperation(), a.GetResource()))
 	}
-
-	// if there are no items held in our indexer, check our live-lookup LRU.
-	if len(items) == 0 {
-		lruItemObj, ok := l.liveLookupCache.Get(a.GetNamespace())
-		if !ok || lruItemObj.(liveLookupEntry).expiry.Before(time.Now()) {
-			lruItemObj = liveLookupEntry{expiry: time.Now().Add(l.liveTTL)}
-			l.liveLookupCache.Add(a.GetNamespace(), lruItemObj)
-		}
-		lruEntry := lruItemObj.(liveLookupEntry)
-
-		items = append(items, lruEntry.items...)
-
-	}
-
 	return items, nil
 }
 
 // NewLimitRanger returns an object that enforces limits based on the supplied limit function
 func NewLimitRanger(actions LimitRangerActions) (*LimitRanger, error) {
-	liveLookupCache := lru.New(10000)
-
 	if actions == nil {
 		actions = &DefaultLimitRangerActions{}
 	}
 
 	return &LimitRanger{
-		Handler:         admission.NewHandler(admission.Create, admission.Update),
-		actions:         actions,
-		liveLookupCache: liveLookupCache,
-		liveTTL:         time.Duration(30 * time.Second),
+		Handler: admission.NewHandler(admission.Create, admission.Update),
+		actions: actions,
 	}, nil
 }
 
