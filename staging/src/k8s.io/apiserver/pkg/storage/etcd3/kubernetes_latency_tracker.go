@@ -18,52 +18,55 @@ package etcd3
 
 import (
 	"context"
-	"time"
 
 	"go.etcd.io/etcd/client/v3/kubernetes"
 	"go.opentelemetry.io/otel/attribute"
-	"k8s.io/component-base/tracing"
+	"go.opentelemetry.io/otel/trace"
 )
 
-func NewKubernetesEtcdLatencyTracker(delegate kubernetes.Interface) kubernetes.Interface {
-	return &kubernetesEtcdLatencyTracker{Interface: delegate}
+const kubernetesEtcdLatencyTrackerTraceKey = "kubernetesEtcd"
+
+func NewKubernetesEtcdLatencyTracker(delegate kubernetes.Interface, tp trace.TracerProvider) kubernetes.Interface {
+	return &kubernetesEtcdLatencyTracker{Interface: delegate, tp: tp}
 }
 
 type kubernetesEtcdLatencyTracker struct {
 	kubernetes.Interface
+
+	tp trace.TracerProvider
 }
 
 func (k *kubernetesEtcdLatencyTracker) Get(ctx context.Context, key string, opts kubernetes.GetOptions) (kubernetes.GetResponse, error) {
-	ctx, span := tracing.Start(ctx, "Get kubernetesEtcd",
-		attribute.String("key", key), attribute.Int("rev", int(opts.Revision)))
-	defer span.End(500 * time.Millisecond)
+	ctx, span := k.tp.Tracer(kubernetesEtcdLatencyTrackerTraceKey).Start(ctx, "Get kubernetesEtcd",
+		trace.WithAttributes(attribute.String("key", key), attribute.Int("rev", int(opts.Revision))))
+	defer span.End()
 	return k.Interface.Get(ctx, key, opts)
 }
 
 func (k *kubernetesEtcdLatencyTracker) List(ctx context.Context, prefix string, opts kubernetes.ListOptions) (kubernetes.ListResponse, error) {
-	ctx, span := tracing.Start(ctx, "List kubernetesEtcd",
-		attribute.String("key", prefix), attribute.Int("rev", int(opts.Revision)), attribute.Int("limit", int(opts.Limit)))
-	defer span.End(500 * time.Millisecond)
+	ctx, span := k.tp.Tracer(kubernetesEtcdLatencyTrackerTraceKey).Start(ctx, "List kubernetesEtcd",
+		trace.WithAttributes(attribute.String("key", prefix), attribute.Int("rev", int(opts.Revision)), attribute.Int("limit", int(opts.Limit))))
+	defer span.End()
 	return k.Interface.List(ctx, prefix, opts)
 }
 
 func (k *kubernetesEtcdLatencyTracker) Count(ctx context.Context, prefix string, opts kubernetes.CountOptions) (int64, error) {
-	ctx, span := tracing.Start(ctx, "Count kubernetesEtcd",
-		attribute.String("key", prefix))
-	defer span.End(500 * time.Millisecond)
+	ctx, span := k.tp.Tracer(kubernetesEtcdLatencyTrackerTraceKey).Start(ctx, "Count kubernetesEtcd",
+		trace.WithAttributes(attribute.String("key", prefix)))
+	defer span.End()
 	return k.Interface.Count(ctx, prefix, opts)
 }
 
 func (k *kubernetesEtcdLatencyTracker) OptimisticPut(ctx context.Context, key string, value []byte, expectedRevision int64, opts kubernetes.PutOptions) (kubernetes.PutResponse, error) {
-	ctx, span := tracing.Start(ctx, "OptimisticPut kubernetesEtcd",
-		attribute.String("key", key), attribute.Int("rev", int(expectedRevision)), attribute.Int("lease", int(opts.LeaseID)), attribute.Bool("get_on_failure", opts.GetOnFailure))
-	defer span.End(500 * time.Millisecond)
+	ctx, span := k.tp.Tracer(kubernetesEtcdLatencyTrackerTraceKey).Start(ctx, "OptimisticPut kubernetesEtcd",
+		trace.WithAttributes(attribute.String("key", key), attribute.Int("rev", int(expectedRevision)), attribute.Int("lease", int(opts.LeaseID)), attribute.Bool("get_on_failure", opts.GetOnFailure)))
+	defer span.End()
 	return k.Interface.OptimisticPut(ctx, key, value, expectedRevision, opts)
 }
 
 func (k *kubernetesEtcdLatencyTracker) OptimisticDelete(ctx context.Context, key string, expectedRevision int64, opts kubernetes.DeleteOptions) (kubernetes.DeleteResponse, error) {
-	ctx, span := tracing.Start(ctx, "OptimisticDelete kubernetesEtcd",
-		attribute.String("key", key), attribute.Int("rev", int(expectedRevision)), attribute.Bool("get_on_failure", opts.GetOnFailure))
-	defer span.End(500 * time.Millisecond)
+	ctx, span := k.tp.Tracer(kubernetesEtcdLatencyTrackerTraceKey).Start(ctx, "OptimisticDelete kubernetesEtcd",
+		trace.WithAttributes(attribute.String("key", key), attribute.Int("rev", int(expectedRevision)), attribute.Bool("get_on_failure", opts.GetOnFailure)))
+	defer span.End()
 	return k.Interface.OptimisticDelete(ctx, key, expectedRevision, opts)
 }
