@@ -456,6 +456,14 @@ endpoint: %s`, listener.Addr().String())), os.FileMode(0755)); err != nil {
 					},
 				},
 				{
+					name: "OptimisticPut kubernetesEtcdContract",
+					attributes: map[string]func(*commonv1.AnyValue) bool{
+						"key": func(v *commonv1.AnyValue) bool {
+							return strings.HasSuffix(v.GetStringValue(), "/minions/fake")
+						},
+					},
+				},
+				{
 					name: "etcdserverpb.KV/Txn",
 					attributes: map[string]func(*commonv1.AnyValue) bool{
 						"rpc.system": func(v *commonv1.AnyValue) bool {
@@ -561,6 +569,14 @@ endpoint: %s`, listener.Addr().String())), os.FileMode(0755)); err != nil {
 					},
 				},
 				{
+					name: "Get kubernetesEtcdContract",
+					attributes: map[string]func(*commonv1.AnyValue) bool{
+						"key": func(v *commonv1.AnyValue) bool {
+							return strings.HasSuffix(v.GetStringValue(), "/minions/fake")
+						},
+					},
+				},
+				{
 					name: "etcdserverpb.KV/Range",
 					attributes: map[string]func(*commonv1.AnyValue) bool{
 						"rpc.system": func(v *commonv1.AnyValue) bool {
@@ -645,6 +661,15 @@ endpoint: %s`, listener.Addr().String())), os.FileMode(0755)); err != nil {
 						"About to List from storage",
 						"Listing from storage done",
 						"Writing http response done",
+					},
+				},
+				{
+					// This call uses contract's Get instead of List due to recursive=false",
+					name: "Get kubernetesEtcdContract",
+					attributes: map[string]func(*commonv1.AnyValue) bool{
+						"key": func(v *commonv1.AnyValue) bool {
+							return strings.Contains(v.GetStringValue(), "/minions")
+						},
 					},
 				},
 				{
@@ -768,6 +793,14 @@ endpoint: %s`, listener.Addr().String())), os.FileMode(0755)); err != nil {
 						"Txn call completed",
 						"Transaction committed",
 						"decode succeeded",
+					},
+				},
+				{
+					name: "OptimisticPut kubernetesEtcdContract",
+					attributes: map[string]func(*commonv1.AnyValue) bool{
+						"key": func(v *commonv1.AnyValue) bool {
+							return strings.HasSuffix(v.GetStringValue(), "/minions/fake")
+						},
 					},
 				},
 				{
@@ -912,6 +945,14 @@ endpoint: %s`, listener.Addr().String())), os.FileMode(0755)); err != nil {
 					},
 				},
 				{
+					name: "OptimisticPut kubernetesEtcdContract",
+					attributes: map[string]func(*commonv1.AnyValue) bool{
+						"key": func(v *commonv1.AnyValue) bool {
+							return strings.HasSuffix(v.GetStringValue(), "/minions/fake")
+						},
+					},
+				},
+				{
 					name: "etcdserverpb.KV/Txn",
 					attributes: map[string]func(*commonv1.AnyValue) bool{
 						"rpc.system": func(v *commonv1.AnyValue) bool {
@@ -1000,6 +1041,14 @@ endpoint: %s`, listener.Addr().String())), os.FileMode(0755)); err != nil {
 						"Object deleted from database",
 						"About to write a response",
 						"Writing http response done",
+					},
+				},
+				{
+					name: "OptimisticDelete kubernetesEtcdContract",
+					attributes: map[string]func(*commonv1.AnyValue) bool{
+						"key": func(v *commonv1.AnyValue) bool {
+							return strings.HasSuffix(v.GetStringValue(), "/minions/fake")
+						},
 					},
 				},
 				{
