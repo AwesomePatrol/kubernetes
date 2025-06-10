@@ -37,10 +37,9 @@ import (
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/grpc"
 
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	client "k8s.io/client-go/kubernetes"
 	kubeapiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
+	configmaptest "k8s.io/kubernetes/test/integration/configmap"
 	"k8s.io/kubernetes/test/integration/framework"
 )
 
@@ -99,18 +98,19 @@ endpoint: %s`, listener.Addr().String())), os.FileMode(0755)); err != nil {
 		expectedTrace []*spanExpectation
 	}{
 		{
-			desc: "create node",
+			desc: "configmap",
 			apiCall: func(ctx context.Context) error {
-				_, err = clientSet.CoreV1().Nodes().Create(ctx,
-					&v1.Node{ObjectMeta: metav1.ObjectMeta{Name: "fake"}}, metav1.CreateOptions{})
-				return err
+				ns := framework.CreateNamespaceOrDie(clientSet, "config-map", t)
+				defer framework.DeleteNamespaceOrDie(clientSet, ns, t)
+				configmaptest.DoTestConfigMap(ctx, t, clientSet, ns)
+				return nil
 			},
 			expectedTrace: []*spanExpectation{
 				{
 					name: "OptimisticPut kubernetesEtcdContract",
 					attributes: map[string]func(*commonv1.AnyValue) bool{
 						"key": func(v *commonv1.AnyValue) bool {
-							return strings.HasSuffix(v.GetStringValue(), "/minions/fake")
+							return strings.Contains(v.GetStringValue(), "/configmaps/")
 						},
 					},
 				},
