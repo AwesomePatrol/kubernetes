@@ -25,6 +25,8 @@ ETCD_PORT=${ETCD_PORT:-2379}
 ETCD_LOGLEVEL=${ETCD_LOGLEVEL:-warn}
 export KUBE_INTEGRATION_ETCD_URL="http://${ETCD_HOST}:${ETCD_PORT}"
 
+export PATH="${PATH}:/go/src/k8s.io/kubernetes/third_party/etcd"
+
 kube::etcd::validate() {
   # validate if in path
   command -v etcd >/dev/null || {
@@ -84,8 +86,8 @@ kube::etcd::start() {
   else
     ETCD_LOGFILE=${ETCD_LOGFILE:-"/dev/null"}
   fi
-  kube::log::info "etcd --advertise-client-urls ${KUBE_INTEGRATION_ETCD_URL} --data-dir ${ETCD_DIR} --listen-client-urls http://${ETCD_HOST}:${ETCD_PORT} --log-level=${ETCD_LOGLEVEL} 2> \"${ETCD_LOGFILE}\" >/dev/null"
-  etcd --advertise-client-urls "${KUBE_INTEGRATION_ETCD_URL}" --data-dir "${ETCD_DIR}" --listen-client-urls "${KUBE_INTEGRATION_ETCD_URL}" --log-level="${ETCD_LOGLEVEL}" 2> "${ETCD_LOGFILE}" >/dev/null &
+  kube::log::info "etcd --advertise-client-urls ${KUBE_INTEGRATION_ETCD_URL} --data-dir ${ETCD_DIR} --listen-client-urls http://${ETCD_HOST}:${ETCD_PORT} --log-level=${ETCD_LOGLEVEL} --enable-distributed-tracing --distributed-tracing-address=\"0.0.0.0:4317\" --distributed-tracing-service-name=\"etcd\" --distributed-tracing-sampling-rate=1000000 2> \"${ETCD_LOGFILE}\" >/dev/null"
+  etcd --advertise-client-urls "${KUBE_INTEGRATION_ETCD_URL}" --data-dir "${ETCD_DIR}" --listen-client-urls "${KUBE_INTEGRATION_ETCD_URL}" --log-level="${ETCD_LOGLEVEL}" --enable-distributed-tracing --distributed-tracing-address="192.168.32.1:4317" --distributed-tracing-service-name="etcd" --distributed-tracing-sampling-rate=1000000 2> "${ETCD_LOGFILE}" >/dev/null &
   ETCD_PID=$!
 
   echo "Waiting for etcd to come up."

@@ -69,6 +69,13 @@ function run_kube_apiserver() {
     VERSION_OVERRIDE="--version=$("${THIS_PLATFORM_BIN}/kube-apiserver" --version | awk '{print $2}')${CUSTOM_VERSION_SUFFIX:-}"
   fi
 
+  cat <<EOF > "/tmp/kube-tracing-file"
+apiVersion: apiserver.config.k8s.io/v1beta1
+kind: TracingConfiguration
+endpoint: 192.168.32.1:4317
+samplingRatePerMillion: 1000000
+EOF
+
   "${THIS_PLATFORM_BIN}/kube-apiserver" \
     ${VERSION_OVERRIDE:+"${VERSION_OVERRIDE}"} \
     --bind-address="127.0.0.1" \
@@ -84,6 +91,7 @@ function run_kube_apiserver() {
     --service-account-issuer="https://kubernetes.default.svc" \
     --service-account-signing-key-file="${SERVICE_ACCOUNT_KEY}" \
     --storage-media-type="${KUBE_TEST_API_STORAGE_TYPE-}" \
+    --tracing-config-file="/tmp/kube-tracing-file" \
     --cert-dir="${TMPDIR:-/tmp/}" \
     --service-cluster-ip-range="10.0.0.0/24" \
     --client-ca-file=hack/testdata/ca/ca.crt \
