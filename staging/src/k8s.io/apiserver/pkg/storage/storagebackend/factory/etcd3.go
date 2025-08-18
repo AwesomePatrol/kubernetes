@@ -351,8 +351,16 @@ var newETCD3Client = func(c storagebackend.TransportConfig) (*kubernetes.Client,
 		TLS:                  tlsConfig,
 		Logger:               etcd3ClientLogger,
 	}
+	client, err := kubernetes.New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if c.TracerProvider != nil {
+		// Decorate the Kubernetes instance so all events added later will belong to short-lived Spans.
+		client.Kubernetes = etcd3.NewKubernetesEtcdContractTracker(client, c.TracerProvider)
+	}
 
-	return kubernetes.New(cfg)
+	return client, nil
 }
 
 type runningCompactor struct {
