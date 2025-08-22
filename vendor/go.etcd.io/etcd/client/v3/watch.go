@@ -273,7 +273,7 @@ func (vc *valCtx) Done() <-chan struct{}       { return valCtxCh }
 func (vc *valCtx) Err() error                  { return nil }
 
 func (w *watcher) newWatcherGRPCStream(inctx context.Context) *watchGRPCStream {
-	ctx, cancel := context.WithCancel(&valCtx{inctx})
+	ctx, cancel := context.WithTimeout(&valCtx{inctx}, time.Minute)
 	wgs := &watchGRPCStream{
 		owner:      w,
 		remote:     w.remote,
