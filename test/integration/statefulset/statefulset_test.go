@@ -172,15 +172,16 @@ func TestSpecReplicasChange(t *testing.T) {
 
 func BenchmarkStatefulSetScale(t *testing.B) {
 	for _, namespaces := range []int{1, 10, 100} {
-		for _, podsPerStatefulset := range []int{10, 20, 50} {
-			stssPerNamespace := 200_000 / (podsPerStatefulset * namespaces)
-			t.Run(fmt.Sprintf("namespaces=%d,statefulsetsPerNamespace=%d,podsPerStatefulset=%d", namespaces, stssPerNamespace, podsPerStatefulset), func(t *testing.B) {
+		for _, statefulsets := range []int{1_000} {
+			stssPerNamespace := statefulsets / namespaces
+			podsPerStatefulset := 20_000 / statefulsets
+			t.Run(fmt.Sprintf("namespaces=%d,statefulsets=%d,podsPerStatefulset=%d", namespaces, statefulsets, podsPerStatefulset), func(t *testing.B) {
 				tCtx, closeFn, rm, informers, c := scSetup(t)
 				defer closeFn()
 				nss := make([]*v1.Namespace, 0, namespaces)
 				for i := 0; i < namespaces; i++ {
 					nss = append(nss,
-						framework.CreateNamespaceOrDie(c, fmt.Sprintf("test-sts-%00d", i), t),
+						framework.CreateNamespaceOrDie(c, fmt.Sprintf("test-sts-%06d", i), t),
 					)
 				}
 				defer func() {
@@ -195,7 +196,7 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 				for _, ns := range nss {
 					createHeadlessService(t, c, newHeadlessService(ns.Name))
 					for i := 0; i < stssPerNamespace; i++ {
-						name := fmt.Sprintf("test-sts-%00d", i)
+						name := fmt.Sprintf("test-sts-%06d", i)
 						sts := newSTS(name, ns.Name, 0)
 						sts.Spec.Selector.MatchLabels[name] = "ok"
 						sts.Spec.Template.Labels[name] = "ok"
@@ -214,6 +215,10 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 						go func() {
 							defer wg.Done()
 							scaleSTS(t, c, sts, int32(podsPerStatefulset))
+
+							podClient := c.CoreV1().Pods(sts.Namespace)
+							pods := getPods(t, podClient, sts.Spec.Selector.MatchLabels)
+							setPodsReadyCondition(t, c, &v1.PodList{Items: pods.Items}, v1.ConditionTrue, time.Now())
 						}()
 					}
 					wg.Wait()
@@ -221,6 +226,17 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 					for _, sts := range stss {
 						go func() {
 							defer wg.Done()
+							stsClient := c.AppsV1().StatefulSets(sts.Namespace)
+							if err := wait.PollImmediate(interval, timeout, func() (bool, error) {
+								newSts, err := stsClient.Get(context.TODO(), sts.Name, metav1.GetOptions{})
+								if err != nil {
+									return false, err
+								}
+								// Verify 4 pods exist, 3 pods are Ready, and 2 pods are Available
+								return newSts.Status.Replicas == int32(podsPerStatefulset) && newSts.Status.ReadyReplicas == int32(podsPerStatefulset), nil
+							}); err != nil {
+								t.Fatalf("Failed to verify number of Replicas, ReadyReplicas and AvailableReplicas of rs %s to be as expected: %v", sts.Name, err)
+							}
 							scaleSTS(t, c, sts, 0)
 						}()
 					}
@@ -400,7 +416,7 @@ func TestStatefulSetAvailable(t *testing.T) {
 	}
 }
 
-func setPodsReadyCondition(t *testing.T, clientSet clientset.Interface, pods *v1.PodList, conditionStatus v1.ConditionStatus, lastTransitionTime time.Time) {
+func setPodsReadyCondition(t testing.TB, clientSet clientset.Interface, pods *v1.PodList, conditionStatus v1.ConditionStatus, lastTransitionTime time.Time) {
 	replicas := int32(len(pods.Items))
 	var readyPods int32
 	err := wait.PollImmediate(interval, timeout, func() (bool, error) {
