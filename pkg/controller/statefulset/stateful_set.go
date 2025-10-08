@@ -267,7 +267,7 @@ func (ssc *StatefulSetController) watchDelay(rv1, resource string) {
 		}
 		diff := now.Sub(rvTime.now)
 		if time.Since(lastWatchDelayUpdate) > time.Second*15 || diff-lastWatchDelay > time.Second*5 {
-			fmt.Printf("\nWATCH_DELAY %.2f\n", diff.Seconds())
+			//fmt.Printf("\nWATCH_DELAY %.2f\n", diff.Seconds())
 			lastWatchDelayUpdate = time.Now()
 			lastWatchDelay = diff
 		}

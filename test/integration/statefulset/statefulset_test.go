@@ -24,8 +24,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/zapr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,6 +41,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
+	"k8s.io/klog/v2"
 	apiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/controller/statefulset"
@@ -50,8 +53,8 @@ import (
 )
 
 const (
-	interval = 100 * time.Millisecond
-	timeout  = 60 * time.Second
+	interval = 800 * time.Millisecond
+	timeout  = 180 * time.Second
 )
 
 // TestVolumeTemplateNoopUpdate ensures embedded StatefulSet objects with embedded PersistentVolumes can be updated
@@ -172,10 +175,14 @@ func TestSpecReplicasChange(t *testing.T) {
 
 func BenchmarkStatefulSetScale(t *testing.B) {
 	for _, namespaces := range []int{1, 100} {
-		for _, statefulsets := range []int{2_000} {
+		for _, statefulsets := range []int{4_000} {
 			stssPerNamespace := statefulsets / namespaces
-			podsPerStatefulset := 10_000 / statefulsets
+			podsPerStatefulset := 16_000 / statefulsets
 			t.Run(fmt.Sprintf("namespaces=%d,statefulsets=%d,podsPerStatefulset=%d", namespaces, statefulsets, podsPerStatefulset), func(t *testing.B) {
+
+				logger := zap.NewNop()
+				klog.SetLogger(zapr.NewLogger(logger))
+
 				tCtx, closeFn, rm, informers, c := scSetup(t)
 				defer closeFn()
 				nss := make([]*v1.Namespace, 0, namespaces)
@@ -207,6 +214,7 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 				for _, sts := range stss {
 					waitSTSStable(t, c, sts)
 				}
+				klog.SetLogger(zapr.NewLogger(logger))
 
 				for t.Loop() {
 					var wg sync.WaitGroup
@@ -227,7 +235,7 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 						go func() {
 							defer wg.Done()
 							stsClient := c.AppsV1().StatefulSets(sts.Namespace)
-							if err := wait.PollImmediate(interval*2, timeout, func() (bool, error) {
+							if err := wait.PollImmediate(interval*2, 4*timeout, func() (bool, error) {
 								newSts, err := stsClient.Get(t.Context(), sts.Name, metav1.GetOptions{})
 								if err != nil {
 									return false, err

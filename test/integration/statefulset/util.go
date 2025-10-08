@@ -47,8 +47,8 @@ import (
 )
 
 const (
-	pollInterval = 100 * time.Millisecond
-	pollTimeout  = 60 * time.Second
+	pollInterval = 500 * time.Millisecond
+	pollTimeout  = 240 * time.Second
 )
 
 func labelMap() map[string]string {
