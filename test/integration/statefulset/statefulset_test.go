@@ -241,6 +241,7 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 					}
 					wg.Wait()
 				}
+				t.ReportMetric(statefulset.MaxWatchDelay.Seconds(), "max_watch_delay_seconds")
 			})
 		}
 	}

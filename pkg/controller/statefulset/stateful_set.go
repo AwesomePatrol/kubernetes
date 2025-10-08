@@ -165,6 +165,8 @@ func NewStatefulSetController(
 
 // Run runs the statefulset controller.
 func (ssc *StatefulSetController) Run(ctx context.Context, workers int) {
+	MaxWatchDelay = 0
+
 	defer utilruntime.HandleCrash()
 
 	// Start events processing pipeline.
@@ -244,6 +246,7 @@ func init() {
 
 var lastWatchDelayUpdate time.Time
 var lastWatchDelay time.Duration
+var MaxWatchDelay time.Duration
 
 func (ssc *StatefulSetController) watchDelay(rv1, resource string) {
 	now := time.Now()
@@ -264,6 +267,9 @@ func (ssc *StatefulSetController) watchDelay(rv1, resource string) {
 			fmt.Printf("\nWATCH_DELAY %.2f\n", diff.Seconds())
 			lastWatchDelayUpdate = time.Now()
 			lastWatchDelay = diff
+		}
+		if diff > MaxWatchDelay {
+			MaxWatchDelay = diff
 		}
 		watchDelayGauge.Set(diff.Seconds())
 		watchDelayHistogram.Observe(diff.Seconds())
