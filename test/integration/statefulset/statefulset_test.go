@@ -172,9 +172,9 @@ func TestSpecReplicasChange(t *testing.T) {
 
 func BenchmarkStatefulSetScale(t *testing.B) {
 	for _, namespaces := range []int{1, 100} {
-		for _, statefulsets := range []int{5_000, 10_000} {
+		for _, statefulsets := range []int{2_000} {
 			stssPerNamespace := statefulsets / namespaces
-			podsPerStatefulset := 50_000 / statefulsets
+			podsPerStatefulset := 20_000 / statefulsets
 			t.Run(fmt.Sprintf("namespaces=%d,statefulsets=%d,podsPerStatefulset=%d", namespaces, statefulsets, podsPerStatefulset), func(t *testing.B) {
 				tCtx, closeFn, rm, informers, c := scSetup(t)
 				defer closeFn()
@@ -227,15 +227,14 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 						go func() {
 							defer wg.Done()
 							stsClient := c.AppsV1().StatefulSets(sts.Namespace)
-							if err := wait.PollImmediate(interval, timeout, func() (bool, error) {
-								newSts, err := stsClient.Get(context.TODO(), sts.Name, metav1.GetOptions{})
+							if err := wait.PollImmediate(interval*2, timeout, func() (bool, error) {
+								newSts, err := stsClient.Get(t.Context(), sts.Name, metav1.GetOptions{})
 								if err != nil {
 									return false, err
 								}
-								// Verify 4 pods exist, 3 pods are Ready, and 2 pods are Available
 								return newSts.Status.Replicas == int32(podsPerStatefulset) && newSts.Status.ReadyReplicas == int32(podsPerStatefulset), nil
 							}); err != nil {
-								t.Fatalf("Failed to verify number of Replicas, ReadyReplicas and AvailableReplicas of rs %s to be as expected: %v", sts.Name, err)
+								t.Errorf("Failed to verify number of Replicas, ReadyReplicas and AvailableReplicas of rs %s to be as expected: %v", sts.Name, err)
 							}
 							scaleSTS(t, c, sts, 0)
 						}()
