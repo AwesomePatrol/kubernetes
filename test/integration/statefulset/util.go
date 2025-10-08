@@ -283,7 +283,7 @@ func updatePodStatus(t *testing.T, podClient typedv1.PodInterface, podName strin
 	return pod
 }
 
-func getPods(t *testing.T, podClient typedv1.PodInterface, labelMap map[string]string) *v1.PodList {
+func getPods(t testing.TB, podClient typedv1.PodInterface, labelMap map[string]string) *v1.PodList {
 	podSelector := labels.Set(labelMap).AsSelector()
 	options := metav1.ListOptions{LabelSelector: podSelector.String()}
 	pods, err := podClient.List(context.TODO(), options)
