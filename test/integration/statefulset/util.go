@@ -163,7 +163,7 @@ func newStatefulSetPVC(name string) v1.PersistentVolumeClaim {
 }
 
 // scSetup sets up necessities for Statefulset integration test, including control plane, apiserver, informers, and clientset
-func scSetup(t *testing.T) (context.Context, kubeapiservertesting.TearDownFunc, *statefulset.StatefulSetController, informers.SharedInformerFactory, clientset.Interface) {
+func scSetup(t testing.TB) (context.Context, kubeapiservertesting.TearDownFunc, *statefulset.StatefulSetController, informers.SharedInformerFactory, clientset.Interface) {
 	tCtx := ktesting.Init(t)
 	// Disable ServiceAccount admission plugin as we don't have serviceaccount controller running.
 	server := kubeapiservertesting.StartTestServerOrDie(t, nil, framework.DefaultTestServerFlags(), framework.SharedEtcd())
@@ -196,18 +196,18 @@ func scSetup(t *testing.T) (context.Context, kubeapiservertesting.TearDownFunc, 
 func runControllerAndInformers(ctx context.Context, sc *statefulset.StatefulSetController, informers informers.SharedInformerFactory) context.CancelFunc {
 	ctx, cancel := context.WithCancel(ctx)
 	informers.Start(ctx.Done())
-	go sc.Run(ctx, 5)
+	go sc.Run(ctx, 48)
 	return cancel
 }
 
-func createHeadlessService(t *testing.T, clientSet clientset.Interface, headlessService *v1.Service) {
+func createHeadlessService(t testing.TB, clientSet clientset.Interface, headlessService *v1.Service) {
 	_, err := clientSet.CoreV1().Services(headlessService.Namespace).Create(context.TODO(), headlessService, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatalf("failed creating headless service: %v", err)
 	}
 }
 
-func createSTSs(t *testing.T, clientSet clientset.Interface, stss []*appsv1.StatefulSet) []*appsv1.StatefulSet {
+func createSTSs(t testing.TB, clientSet clientset.Interface, stss []*appsv1.StatefulSet) []*appsv1.StatefulSet {
 	var createdSTSs []*appsv1.StatefulSet
 	for _, sts := range stss {
 		createdSTS, err := clientSet.AppsV1().StatefulSets(sts.Namespace).Create(context.TODO(), sts, metav1.CreateOptions{})
@@ -237,7 +237,7 @@ func createSTSsPods(t *testing.T, clientSet clientset.Interface, stss []*appsv1.
 }
 
 // Verify .Status.Replicas is equal to .Spec.Replicas
-func waitSTSStable(t *testing.T, clientSet clientset.Interface, sts *appsv1.StatefulSet) {
+func waitSTSStable(t testing.TB, clientSet clientset.Interface, sts *appsv1.StatefulSet) {
 	stsClient := clientSet.AppsV1().StatefulSets(sts.Namespace)
 	desiredGeneration := sts.Generation
 	if err := wait.PollImmediate(pollInterval, pollTimeout, func() (bool, error) {
@@ -342,7 +342,7 @@ func updateSTS(t *testing.T, stsClient typedappsv1.StatefulSetInterface, stsName
 }
 
 // Update .Spec.Replicas to replicas and verify .Status.Replicas is changed accordingly
-func scaleSTS(t *testing.T, c clientset.Interface, sts *appsv1.StatefulSet, replicas int32) {
+func scaleSTS(t testing.TB, c clientset.Interface, sts *appsv1.StatefulSet, replicas int32) {
 	stsClient := c.AppsV1().StatefulSets(sts.Namespace)
 	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		newSTS, err := stsClient.Get(context.TODO(), sts.Name, metav1.GetOptions{})

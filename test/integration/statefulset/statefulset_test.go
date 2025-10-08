@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -166,6 +167,63 @@ func TestSpecReplicasChange(t *testing.T) {
 		return newSTS.Status.ObservedGeneration >= savedGeneration, nil
 	}); err != nil {
 		t.Fatalf("failed to verify .Status.ObservedGeneration has incremented for sts %s: %v", sts.Name, err)
+	}
+}
+
+func BenchmarkStatefulSetScale(t *testing.B) {
+	for _, namespaces := range []int{1, 10, 100} {
+		for _, podsPerStatefulset := range []int{10, 20, 50} {
+			stssPerNamespace := 200_000 / (podsPerStatefulset * namespaces)
+			t.Run(fmt.Sprintf("namespaces=%d,statefulsetsPerNamespace=%d,podsPerStatefulset=%d", namespaces, stssPerNamespace, podsPerStatefulset), func(t *testing.B) {
+				tCtx, closeFn, rm, informers, c := scSetup(t)
+				defer closeFn()
+				nss := make([]*v1.Namespace, 0, namespaces)
+				for i := 0; i < namespaces; i++ {
+					nss = append(nss,
+						framework.CreateNamespaceOrDie(c, fmt.Sprintf("test-sts-%00d", i), t),
+					)
+				}
+				defer func() {
+					for _, ns := range nss {
+						framework.DeleteNamespaceOrDie(c, ns, t)
+					}
+				}()
+				cancel := runControllerAndInformers(tCtx, rm, informers)
+				defer cancel()
+
+				stss := make([]*appsv1.StatefulSet, 0, namespaces*stssPerNamespace)
+				for _, ns := range nss {
+					createHeadlessService(t, c, newHeadlessService(ns.Name))
+					for i := 0; i < stssPerNamespace; i++ {
+						name := fmt.Sprintf("test-sts-%00d", i)
+						sts := newSTS(name, ns.Name, 0)
+						sts.Spec.Selector.MatchLabels[name] = "ok"
+						sts.Spec.Template.Labels[name] = "ok"
+						stss = append(stss, sts)
+					}
+				}
+				createSTSs(t, c, stss)
+				for _, sts := range stss {
+					waitSTSStable(t, c, sts)
+				}
+
+				for t.Loop() {
+					var wg sync.WaitGroup
+					for _, sts := range stss {
+						wg.Go(func() {
+							scaleSTS(t, c, sts, int32(podsPerStatefulset))
+						})
+					}
+					wg.Wait()
+					for _, sts := range stss {
+						wg.Go(func() {
+							scaleSTS(t, c, sts, 0)
+						})
+					}
+					wg.Wait()
+				}
+			})
+		}
 	}
 }
 
