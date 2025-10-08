@@ -209,16 +209,20 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 
 				for t.Loop() {
 					var wg sync.WaitGroup
+					wg.Add(len(stss))
 					for _, sts := range stss {
-						wg.Go(func() {
+						go func() {
+							defer wg.Done()
 							scaleSTS(t, c, sts, int32(podsPerStatefulset))
-						})
+						}()
 					}
 					wg.Wait()
+					wg.Add(len(stss))
 					for _, sts := range stss {
-						wg.Go(func() {
+						go func() {
+							defer wg.Done()
 							scaleSTS(t, c, sts, 0)
-						})
+						}()
 					}
 					wg.Wait()
 				}
