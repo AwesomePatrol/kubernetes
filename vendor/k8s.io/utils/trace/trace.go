@@ -233,7 +233,7 @@ func (t *Trace) logTrace() {
 		t.writeTraceSteps(&buffer, fmt.Sprintf("\nTrace[%d]: ", traceNum), stepThreshold)
 		buffer.WriteString(fmt.Sprintf("\nTrace[%d]: [%v] [%v] END\n", traceNum, t.endTime.Sub(t.startTime), totalTime))
 
-		fmt.Printf("\n%s\n", buffer.String())
+		//fmt.Printf("\n%s\n", buffer.String())
 		return
 	}
 
