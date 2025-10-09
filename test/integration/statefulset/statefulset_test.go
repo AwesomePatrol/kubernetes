@@ -175,9 +175,9 @@ func TestSpecReplicasChange(t *testing.T) {
 
 func BenchmarkStatefulSetScale(t *testing.B) {
 	for _, namespaces := range []int{1, 100} {
-		for _, statefulsets := range []int{1_000, 2_000, 3_000} {
+		for _, statefulsets := range []int{2_000, 4_000} {
 			stssPerNamespace := statefulsets / namespaces
-			podsPerStatefulset := 6_000 / statefulsets
+			podsPerStatefulset := 8_000 / statefulsets
 			t.Run(fmt.Sprintf("namespaces=%d,statefulsets=%d,podsPerStatefulset=%d", namespaces, statefulsets, podsPerStatefulset), func(t *testing.B) {
 
 				logger := zap.NewNop()
