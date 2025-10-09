@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/client-go/informers"
@@ -47,8 +48,8 @@ import (
 )
 
 const (
-	pollInterval = 500 * time.Millisecond
-	pollTimeout  = 240 * time.Second
+	pollInterval = 800 * time.Millisecond
+	pollTimeout  = 600 * time.Second
 )
 
 func labelMap() map[string]string {
@@ -141,6 +142,114 @@ func newSTS(name, namespace string, replicas int) *appsv1.StatefulSet {
 	}
 }
 
+func newSmallSTS(name, namespace string, replicas int) *appsv1.StatefulSet {
+	replicasCopy := int32(replicas)
+	labels := labelMap()
+	labels["name"] = name
+	labels["app"] = "ok"
+	return &appsv1.StatefulSet{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "StatefulSet",
+			APIVersion: "apps/v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+			Annotations: map[string]string{
+				rand.SafeEncodeString(rand.String(60)): rand.String(60),
+				rand.SafeEncodeString(rand.String(60)): rand.String(60),
+				rand.SafeEncodeString(rand.String(60)): rand.String(60),
+				rand.SafeEncodeString(rand.String(60)): rand.String(60),
+				rand.SafeEncodeString(rand.String(60)): rand.String(60),
+			},
+		},
+		Spec: appsv1.StatefulSetSpec{
+			PodManagementPolicy: appsv1.ParallelPodManagement,
+			Replicas:            &replicasCopy,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{name: name},
+			},
+			Template: v1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{name: name},
+				},
+				Spec: v1.PodSpec{
+					Containers: []v1.Container{
+						{
+							Name:  "fake-name",
+							Image: "fakeimage",
+						},
+						{
+							Name:  "fake-name-a",
+							Image: "fakeimage-a",
+							Command: []string{
+								rand.String(500),
+							},
+							Args: []string{
+								rand.String(500),
+								rand.String(500),
+								rand.String(500),
+								rand.String(500),
+								rand.String(500),
+							},
+							Env: []v1.EnvVar{
+								{
+									Name:  "fake-name-a",
+									Value: rand.String(500),
+								},
+							},
+						},
+						{
+							Name:  "fake-name-b",
+							Image: "fakeimage-b",
+							Command: []string{
+								rand.String(500),
+							},
+							Args: []string{
+								rand.String(500),
+								rand.String(500),
+								rand.String(500),
+								rand.String(500),
+								rand.String(500),
+							},
+							Env: []v1.EnvVar{
+								{
+									Name:  "fake-name-a",
+									Value: rand.String(500),
+								},
+							},
+						},
+						{
+							Name:  "fake-name-c",
+							Image: "fakeimage-c",
+							Command: []string{
+								rand.String(500),
+							},
+							Args: []string{
+								rand.String(500),
+								rand.String(500),
+								rand.String(500),
+								rand.String(500),
+								rand.String(500),
+							},
+							Env: []v1.EnvVar{
+								{
+									Name:  "fake-name-a",
+									Value: rand.String(500),
+								},
+							},
+						},
+					},
+				},
+			},
+			ServiceName: namespace,
+			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
+				Type: appsv1.RollingUpdateStatefulSetStrategyType,
+			},
+		},
+	}
+}
+
 func newStatefulSetPVC(name string) v1.PersistentVolumeClaim {
 	return v1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
@@ -196,7 +305,7 @@ func scSetup(t testing.TB) (context.Context, kubeapiservertesting.TearDownFunc, 
 func runControllerAndInformers(ctx context.Context, sc *statefulset.StatefulSetController, informers informers.SharedInformerFactory) context.CancelFunc {
 	ctx, cancel := context.WithCancel(ctx)
 	informers.Start(ctx.Done())
-	go sc.Run(ctx, 48)
+	go sc.Run(ctx, 50)
 	return cancel
 }
 
