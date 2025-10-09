@@ -174,86 +174,89 @@ func TestSpecReplicasChange(t *testing.T) {
 }
 
 func BenchmarkStatefulSetScale(t *testing.B) {
-	for _, slack := range []int{50, 500} {
+	for _, slack := range []int{5, 500} {
 		for _, namespaces := range []int{1, 100} {
-			for _, statefulsets := range []int{1_000, 2_000} {
-				stssPerNamespace := statefulsets / namespaces
-				podsPerStatefulset := 4_000 / statefulsets
-				t.Run(fmt.Sprintf("slack=%d,namespaces=%d,statefulsets=%d,podsPerStatefulset=%d", slack, namespaces, statefulsets, podsPerStatefulset), func(t *testing.B) {
+			for _, statefulsets := range []int{2_000, 4_000} {
+				for _, pods := range []int{8_000, 16_000} {
+					stssPerNamespace := statefulsets / namespaces
+					podsPerStatefulset := pods / statefulsets
+					t.Run(fmt.Sprintf("slack=%d,pods=%d,namespaces=%d,statefulsets=%d,podsPerStatefulset=%d", slack, pods, namespaces, statefulsets, podsPerStatefulset), func(t *testing.B) {
 
-					logger := zap.NewNop()
-					klog.SetLogger(zapr.NewLogger(logger))
+						logger := zap.NewNop()
+						klog.SetLogger(zapr.NewLogger(logger))
 
-					time.Sleep(time.Second * 10)
+						time.Sleep(time.Second * 10)
 
-					tCtx, closeFn, rm, informers, c := scSetup(t)
-					defer closeFn()
-					nss := make([]*v1.Namespace, 0, namespaces)
-					for i := 0; i < namespaces; i++ {
-						nss = append(nss,
-							framework.CreateNamespaceOrDie(c, fmt.Sprintf("test-sts-%06d", i), t),
-						)
-					}
-					defer func() {
+						framework.StartEtcd(t, nil, true)
+						tCtx, closeFn, rm, informers, c := scSetup(t)
+						defer closeFn()
+						nss := make([]*v1.Namespace, 0, namespaces)
+						for i := 0; i < namespaces; i++ {
+							nss = append(nss,
+								framework.CreateNamespaceOrDie(c, fmt.Sprintf("test-sts-%06d", i), t),
+							)
+						}
+						defer func() {
+							for _, ns := range nss {
+								framework.DeleteNamespaceOrDie(c, ns, t)
+							}
+						}()
+						cancel := runControllerAndInformers(tCtx, rm, informers)
+						defer cancel()
+
+						stss := make([]*appsv1.StatefulSet, 0, namespaces*stssPerNamespace)
 						for _, ns := range nss {
-							framework.DeleteNamespaceOrDie(c, ns, t)
+							createHeadlessService(t, c, newHeadlessService(ns.Name))
+							for i := 0; i < stssPerNamespace; i++ {
+								name := fmt.Sprintf("test-sts-%06d", i)
+								sts := newSmallSTS(name, ns.Name, 0, slack)
+								stss = append(stss, sts)
+							}
 						}
-					}()
-					cancel := runControllerAndInformers(tCtx, rm, informers)
-					defer cancel()
-
-					stss := make([]*appsv1.StatefulSet, 0, namespaces*stssPerNamespace)
-					for _, ns := range nss {
-						createHeadlessService(t, c, newHeadlessService(ns.Name))
-						for i := 0; i < stssPerNamespace; i++ {
-							name := fmt.Sprintf("test-sts-%06d", i)
-							sts := newSmallSTS(name, ns.Name, 0, slack)
-							stss = append(stss, sts)
-						}
-					}
-					t.Logf("sts size: %d", stss[0].Size())
-					createSTSs(t, c, stss)
-					for _, sts := range stss {
-						waitSTSStable(t, c, sts)
-					}
-					klog.SetLogger(zapr.NewLogger(logger))
-
-					for t.Loop() {
-						var wg sync.WaitGroup
-						wg.Add(len(stss))
+						createSTSs(t, c, stss)
 						for _, sts := range stss {
-							go func() {
-								defer wg.Done()
-								scaleSTS(t, c, sts, int32(podsPerStatefulset))
-
-								podClient := c.CoreV1().Pods(sts.Namespace)
-								pods := getPods(t, podClient, sts.Spec.Selector.MatchLabels)
-								setPodsReadyCondition(t, c, &v1.PodList{Items: pods.Items}, v1.ConditionTrue, time.Now())
-							}()
+							waitSTSStable(t, c, sts)
 						}
-						wg.Wait()
-						wg.Add(len(stss))
-						for _, sts := range stss {
-							go func() {
-								defer wg.Done()
-								stsClient := c.AppsV1().StatefulSets(sts.Namespace)
-								if err := wait.PollImmediate(interval*2, 4*timeout, func() (bool, error) {
-									newSts, err := stsClient.Get(t.Context(), sts.Name, metav1.GetOptions{})
-									if err != nil {
-										return false, err
+						klog.SetLogger(zapr.NewLogger(logger))
+
+						for t.Loop() {
+							var wg sync.WaitGroup
+							wg.Add(len(stss))
+							for _, sts := range stss {
+								go func() {
+									defer wg.Done()
+									scaleSTS(t, c, sts, int32(podsPerStatefulset))
+
+									podClient := c.CoreV1().Pods(sts.Namespace)
+									pods := getPods(t, podClient, sts.Spec.Selector.MatchLabels)
+									setPodsReadyCondition(t, c, &v1.PodList{Items: pods.Items}, v1.ConditionTrue, time.Now())
+								}()
+							}
+							wg.Wait()
+							wg.Add(len(stss))
+							for _, sts := range stss {
+								go func() {
+									defer wg.Done()
+									stsClient := c.AppsV1().StatefulSets(sts.Namespace)
+									if err := wait.PollImmediate(interval*2, 4*timeout, func() (bool, error) {
+										newSts, err := stsClient.Get(t.Context(), sts.Name, metav1.GetOptions{})
+										if err != nil {
+											return false, err
+										}
+										return newSts.Status.Replicas == int32(podsPerStatefulset) && newSts.Status.ReadyReplicas == int32(podsPerStatefulset), nil
+									}); err != nil {
+										t.Errorf("Failed to verify number of Replicas, ReadyReplicas and AvailableReplicas of rs %s to be as expected: %v", sts.Name, err)
 									}
-									return newSts.Status.Replicas == int32(podsPerStatefulset) && newSts.Status.ReadyReplicas == int32(podsPerStatefulset), nil
-								}); err != nil {
-									t.Errorf("Failed to verify number of Replicas, ReadyReplicas and AvailableReplicas of rs %s to be as expected: %v", sts.Name, err)
-								}
-								scaleSTS(t, c, sts, 0)
-							}()
+									scaleSTS(t, c, sts, 0)
+								}()
+							}
+							wg.Wait()
 						}
-						wg.Wait()
-					}
-					time.Sleep(time.Second * 10)
-					t.ReportMetric(statefulset.MaxWatchDelay.Seconds(), "max_watch_delay_seconds")
-				})
+						time.Sleep(time.Second * 10)
+						t.ReportMetric(statefulset.MaxWatchDelay.Seconds(), "max_watch_delay_seconds")
+						t.ReportMetric(float64(stss[0].Size()), "sts_size_bytes")
+					})
+				}
 			}
 		}
 	}
