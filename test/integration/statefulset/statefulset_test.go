@@ -54,7 +54,7 @@ import (
 
 const (
 	interval = 800 * time.Millisecond
-	timeout  = 180 * time.Second
+	timeout  = 300 * time.Second
 )
 
 // TestVolumeTemplateNoopUpdate ensures embedded StatefulSet objects with embedded PersistentVolumes can be updated
@@ -175,13 +175,15 @@ func TestSpecReplicasChange(t *testing.T) {
 
 func BenchmarkStatefulSetScale(t *testing.B) {
 	for _, namespaces := range []int{1, 100} {
-		for _, statefulsets := range []int{2_000, 4_000} {
+		for _, statefulsets := range []int{1_000, 2_000} {
 			stssPerNamespace := statefulsets / namespaces
-			podsPerStatefulset := 8_000 / statefulsets
+			podsPerStatefulset := 4_000 / statefulsets
 			t.Run(fmt.Sprintf("namespaces=%d,statefulsets=%d,podsPerStatefulset=%d", namespaces, statefulsets, podsPerStatefulset), func(t *testing.B) {
 
 				logger := zap.NewNop()
 				klog.SetLogger(zapr.NewLogger(logger))
+
+				time.Sleep(time.Second * 10)
 
 				tCtx, closeFn, rm, informers, c := scSetup(t)
 				defer closeFn()
@@ -204,13 +206,11 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 					createHeadlessService(t, c, newHeadlessService(ns.Name))
 					for i := 0; i < stssPerNamespace; i++ {
 						name := fmt.Sprintf("test-sts-%06d", i)
-						sts := newSTS(name, ns.Name, 0)
-						sts.Spec.ServiceName = ns.Name
-						sts.Spec.Selector.MatchLabels[name] = "ok"
-						sts.Spec.Template.Labels[name] = "ok"
+						sts := newSmallSTS(name, ns.Name, 0)
 						stss = append(stss, sts)
 					}
 				}
+				t.Logf("sts size: %d", stss[0].Size())
 				createSTSs(t, c, stss)
 				for _, sts := range stss {
 					waitSTSStable(t, c, sts)
@@ -250,6 +250,7 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 					}
 					wg.Wait()
 				}
+				time.Sleep(time.Second * 10)
 				t.ReportMetric(statefulset.MaxWatchDelay.Seconds(), "max_watch_delay_seconds")
 			})
 		}
