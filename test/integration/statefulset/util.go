@@ -38,6 +38,7 @@ import (
 	typedappsv1 "k8s.io/client-go/kubernetes/typed/apps/v1"
 	typedv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/util/flowcontrol"
 	"k8s.io/client-go/util/retry"
 	kubeapiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	api "k8s.io/kubernetes/pkg/apis/core"
@@ -183,14 +184,14 @@ func newSmallSTS(name, namespace string, replicas int, slack int) *appsv1.Statef
 							Name:  "fake-name-a",
 							Image: "fakeimage-a",
 							Command: []string{
-								rand.String(500),
+								rand.String(slack),
 							},
 							Args: []string{
-								rand.String(500),
-								rand.String(500),
-								rand.String(500),
-								rand.String(500),
-								rand.String(500),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
 							},
 							Env: []v1.EnvVar{
 								{
@@ -203,13 +204,13 @@ func newSmallSTS(name, namespace string, replicas int, slack int) *appsv1.Statef
 							Name:  "fake-name-b",
 							Image: "fakeimage-b",
 							Command: []string{
-								rand.String(500),
+								rand.String(slack),
 							},
 							Args: []string{
-								rand.String(500),
-								rand.String(500),
-								rand.String(500),
-								rand.String(500),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
 								rand.String(slack),
 							},
 							Env: []v1.EnvVar{
@@ -223,14 +224,14 @@ func newSmallSTS(name, namespace string, replicas int, slack int) *appsv1.Statef
 							Name:  "fake-name-c",
 							Image: "fakeimage-c",
 							Command: []string{
-								rand.String(500),
+								rand.String(slack),
 							},
 							Args: []string{
-								rand.String(500),
-								rand.String(500),
-								rand.String(500),
-								rand.String(500),
-								rand.String(500),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
+								rand.String(slack),
 							},
 							Env: []v1.EnvVar{
 								{
@@ -278,6 +279,8 @@ func scSetup(t testing.TB) (context.Context, kubeapiservertesting.TearDownFunc, 
 	server := kubeapiservertesting.StartTestServerOrDie(t, nil, framework.DefaultTestServerFlags(), framework.SharedEtcd())
 
 	config := restclient.CopyConfig(server.ClientConfig)
+	clientConfig := restclient.CopyConfig(server.ClientConfig)
+	clientConfig.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(400, 500)
 	clientSet, err := clientset.NewForConfig(config)
 	if err != nil {
 		t.Fatalf("error in create clientset: %v", err)
