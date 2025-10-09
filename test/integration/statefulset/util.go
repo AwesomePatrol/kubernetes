@@ -142,7 +142,7 @@ func newSTS(name, namespace string, replicas int) *appsv1.StatefulSet {
 	}
 }
 
-func newSmallSTS(name, namespace string, replicas int) *appsv1.StatefulSet {
+func newSmallSTS(name, namespace string, replicas int, slack int) *appsv1.StatefulSet {
 	replicasCopy := int32(replicas)
 	labels := labelMap()
 	labels["name"] = name
@@ -195,7 +195,7 @@ func newSmallSTS(name, namespace string, replicas int) *appsv1.StatefulSet {
 							Env: []v1.EnvVar{
 								{
 									Name:  "fake-name-a",
-									Value: rand.String(500),
+									Value: rand.String(slack),
 								},
 							},
 						},
@@ -210,12 +210,12 @@ func newSmallSTS(name, namespace string, replicas int) *appsv1.StatefulSet {
 								rand.String(500),
 								rand.String(500),
 								rand.String(500),
-								rand.String(500),
+								rand.String(slack),
 							},
 							Env: []v1.EnvVar{
 								{
 									Name:  "fake-name-a",
-									Value: rand.String(500),
+									Value: rand.String(slack),
 								},
 							},
 						},
@@ -235,7 +235,7 @@ func newSmallSTS(name, namespace string, replicas int) *appsv1.StatefulSet {
 							Env: []v1.EnvVar{
 								{
 									Name:  "fake-name-a",
-									Value: rand.String(500),
+									Value: rand.String(slack),
 								},
 							},
 						},
