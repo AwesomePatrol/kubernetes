@@ -19,6 +19,7 @@ package statefulset
 import (
 	"context"
 	"fmt"
+	"io"
 	"strconv"
 	"sync"
 	"testing"
@@ -50,6 +51,7 @@ import (
 	"k8s.io/kubernetes/test/integration/framework"
 	"k8s.io/kubernetes/test/utils/ktesting"
 	"k8s.io/utils/ptr"
+	utiltrace "k8s.io/utils/trace"
 )
 
 const (
@@ -174,10 +176,10 @@ func TestSpecReplicasChange(t *testing.T) {
 }
 
 func BenchmarkStatefulSetScale(t *testing.B) {
-	for _, slack := range []int{5, 500} {
-		for _, namespaces := range []int{1, 100} {
-			for _, statefulsets := range []int{2_000, 4_000} {
-				for _, pods := range []int{8_000, 16_000} {
+	for _, slack := range []int{100} {
+		for _, namespaces := range []int{2} {
+			for _, statefulsets := range []int{2_000} {
+				for _, pods := range []int{32_000, 48_000, 64_000} {
 					stssPerNamespace := statefulsets / namespaces
 					podsPerStatefulset := pods / statefulsets
 					t.Run(fmt.Sprintf("slack=%d,pods=%d,namespaces=%d,statefulsets=%d,podsPerStatefulset=%d", slack, pods, namespaces, statefulsets, podsPerStatefulset), func(t *testing.B) {
@@ -187,7 +189,8 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 
 						time.Sleep(time.Second * 10)
 
-						framework.StartEtcd(t, nil, true)
+						utiltrace.TraceCount = 0
+						framework.StartEtcd(t, io.Discard, true)
 						tCtx, closeFn, rm, informers, c := scSetup(t)
 						defer closeFn()
 						nss := make([]*v1.Namespace, 0, namespaces)
@@ -255,6 +258,7 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 						time.Sleep(time.Second * 10)
 						t.ReportMetric(statefulset.MaxWatchDelay.Seconds(), "max_watch_delay_seconds")
 						t.ReportMetric(float64(stss[0].Size()), "sts_size_bytes")
+						t.ReportMetric(float64(utiltrace.TraceCount), "trace_count")
 					})
 				}
 			}

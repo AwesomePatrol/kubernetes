@@ -279,15 +279,11 @@ func scSetup(t testing.TB) (context.Context, kubeapiservertesting.TearDownFunc, 
 	server := kubeapiservertesting.StartTestServerOrDie(t, nil, framework.DefaultTestServerFlags(), framework.SharedEtcd())
 
 	config := restclient.CopyConfig(server.ClientConfig)
-	clientConfig := restclient.CopyConfig(server.ClientConfig)
-	clientConfig.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(400, 500)
-	clientSet, err := clientset.NewForConfig(config)
-	if err != nil {
-		t.Fatalf("error in create clientset: %v", err)
-	}
+	config.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(500, 600)
 	resyncPeriod := 12 * time.Hour
 	informers := informers.NewSharedInformerFactory(clientset.NewForConfigOrDie(restclient.AddUserAgent(config, "statefulset-informers")), resyncPeriod)
 
+	config.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(500, 600)
 	sc := statefulset.NewStatefulSetController(
 		tCtx,
 		informers.Core().V1().Pods(),
@@ -300,6 +296,13 @@ func scSetup(t testing.TB) (context.Context, kubeapiservertesting.TearDownFunc, 
 	teardown := func() {
 		tCtx.Cancel("tearing down controller")
 		server.TearDownFn()
+	}
+
+	clientConfig := restclient.CopyConfig(server.ClientConfig)
+	clientConfig.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(400, 500)
+	clientSet, err := clientset.NewForConfig(clientConfig)
+	if err != nil {
+		t.Fatalf("error in create clientset: %v", err)
 	}
 	return tCtx, teardown, sc, informers, clientSet
 }
