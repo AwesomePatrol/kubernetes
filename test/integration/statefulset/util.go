@@ -148,6 +148,7 @@ func newSmallSTS(name, namespace string, replicas int, slack int) *appsv1.Statef
 	labels := labelMap()
 	labels["name"] = name
 	labels["app"] = "ok"
+	labels["slack"] = rand.String(60)
 	return &appsv1.StatefulSet{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "StatefulSet",
@@ -168,11 +169,11 @@ func newSmallSTS(name, namespace string, replicas int, slack int) *appsv1.Statef
 			PodManagementPolicy: appsv1.ParallelPodManagement,
 			Replicas:            &replicasCopy,
 			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{name: name},
+				MatchLabels: map[string]string{"name": name},
 			},
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{name: name},
+					Labels: labels,
 				},
 				Spec: v1.PodSpec{
 					Containers: []v1.Container{
