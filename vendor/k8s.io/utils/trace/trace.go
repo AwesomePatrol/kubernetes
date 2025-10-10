@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -211,12 +212,18 @@ func (t *Trace) LogIfLong(threshold time.Duration) {
 	t.Log()
 }
 
+var TraceCount uint64
+
 // logTopLevelTraces finds all traces in a hierarchy of nested traces that should be logged but do not have any
 // parents that will be logged, due to threshold limits, and logs them as top level traces.
 func (t *Trace) logTrace() {
 	t.lock.RLock()
 	defer t.lock.RUnlock()
 	if t.durationIsWithinThreshold() {
+		if t.name == "RealFIFO Pop Process" {
+			atomic.AddUint64(&TraceCount, 1)
+			return
+		}
 		var buffer bytes.Buffer
 		traceNum := rand.Int31()
 
