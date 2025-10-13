@@ -308,6 +308,36 @@ func scSetup(t testing.TB) (context.Context, kubeapiservertesting.TearDownFunc, 
 	return tCtx, teardown, sc, informers, clientSet
 }
 
+// scSetup sets up necessities for Statefulset integration test, including control plane, apiserver, informers, and clientset
+func scSetupCC(t testing.TB) (context.Context, kubeapiservertesting.TearDownFunc, *statefulset.StatefulSetController, informers.SharedInformerFactory, *restclient.Config) {
+	tCtx := ktesting.Init(t)
+	// Disable ServiceAccount admission plugin as we don't have serviceaccount controller running.
+	server := kubeapiservertesting.StartTestServerOrDie(t, nil, framework.DefaultTestServerFlags(), framework.SharedEtcd())
+
+	config := restclient.CopyConfig(server.ClientConfig)
+	config.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(500, 600)
+	resyncPeriod := 12 * time.Hour
+	informers := informers.NewSharedInformerFactory(clientset.NewForConfigOrDie(restclient.AddUserAgent(config, "statefulset-informers")), resyncPeriod)
+
+	config.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(500, 600)
+	sc := statefulset.NewStatefulSetController(
+		tCtx,
+		informers.Core().V1().Pods(),
+		informers.Apps().V1().StatefulSets(),
+		informers.Core().V1().PersistentVolumeClaims(),
+		informers.Apps().V1().ControllerRevisions(),
+		clientset.NewForConfigOrDie(restclient.AddUserAgent(config, "statefulset-controller")),
+	)
+
+	teardown := func() {
+		tCtx.Cancel("tearing down controller")
+		server.TearDownFn()
+	}
+
+	clientConfig := restclient.CopyConfig(server.ClientConfig)
+	return tCtx, teardown, sc, informers, clientConfig
+}
+
 // Run STS controller and informers
 func runControllerAndInformers(ctx context.Context, sc *statefulset.StatefulSetController, informers informers.SharedInformerFactory) context.CancelFunc {
 	ctx, cancel := context.WithCancel(ctx)
@@ -466,8 +496,12 @@ func scaleSTS(t testing.TB, c clientset.Interface, sts *appsv1.StatefulSet, repl
 			return err
 		}
 		*newSTS.Spec.Replicas = replicas
-		sts, err = stsClient.Update(context.TODO(), newSTS, metav1.UpdateOptions{})
-		return err
+		stsNew, err := stsClient.Update(context.TODO(), newSTS, metav1.UpdateOptions{})
+		if err != nil {
+			return err
+		}
+		sts = stsNew
+		return nil
 	}); err != nil {
 		t.Fatalf("failed to update .Spec.Replicas to %d for sts %s: %v", replicas, sts.Name, err)
 	}
