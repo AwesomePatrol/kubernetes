@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"strconv"
 	"sync"
 	"testing"
@@ -41,6 +42,7 @@ import (
 	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/util/flowcontrol"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/klog/v2"
 	apiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
@@ -176,13 +178,23 @@ func TestSpecReplicasChange(t *testing.T) {
 }
 
 func BenchmarkStatefulSetScale(t *testing.B) {
-	for _, slack := range []int{500} {
-		for _, namespaces := range []int{2} {
+	slack := 500
+	namespaces := 2
+	for _, qps := range []int{1_000} {
+		for _, podsWSS := range []int{0, 20_000, 40_000, 60_000} {
 			for _, statefulsets := range []int{4_000} {
-				for _, pods := range []int{80_000, 100_000} {
+				for _, stsWSS := range []int{0, 1_000, 2_000} {
+					if podsWSS == 0 && stsWSS == 0 {
+						continue
+					}
+					pods := 120_000
 					stssPerNamespace := statefulsets / namespaces
 					podsPerStatefulset := pods / statefulsets
-					t.Run(fmt.Sprintf("slack=%d,pods=%d,namespaces=%d,statefulsets=%d,podsPerStatefulset=%d", slack, pods, namespaces, statefulsets, podsPerStatefulset), func(t *testing.B) {
+					t.Run(fmt.Sprintf("pods=%d,statefulsets=%d,podsPerStatefulset=%d,qps=%d,podsWSS=%d,stsWSS=%d", pods, statefulsets, podsPerStatefulset, qps, podsWSS, stsWSS), func(t *testing.B) {
+
+						if podsWSS > (podsPerStatefulset-2)*statefulsets {
+							t.Fatalf("WSS can't be higher than total number of pods")
+						}
 
 						logger := zap.NewNop()
 						klog.SetLogger(zapr.NewLogger(logger))
@@ -191,7 +203,22 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 
 						utiltrace.TraceCount = 0
 						framework.StartEtcd(t, io.Discard, true)
-						tCtx, closeFn, rm, informers, c := scSetup(t)
+						tCtx, closeFn, rm, informers, cc := scSetupCC(t)
+
+						podsClientConfig := restclient.CopyConfig(cc)
+						podsClientConfig.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(float32(qps/2), qps/4)
+						podC, err := clientset.NewForConfig(podsClientConfig)
+						if err != nil {
+							t.Fatalf("error in create clientset: %v", err)
+						}
+
+						clientConfig := restclient.CopyConfig(cc)
+						clientConfig.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(float32(qps/2), qps/4)
+						c, err := clientset.NewForConfig(clientConfig)
+						if err != nil {
+							t.Fatalf("error in create clientset: %v", err)
+						}
+
 						defer closeFn()
 						nss := make([]*v1.Namespace, 0, namespaces)
 						for i := 0; i < namespaces; i++ {
@@ -212,7 +239,7 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 							createHeadlessService(t, c, newHeadlessService(ns.Name))
 							for i := 0; i < stssPerNamespace; i++ {
 								name := fmt.Sprintf("test-sts-%06d", i)
-								sts := newSmallSTS(name, ns.Name, 0, slack)
+								sts := newSmallSTS(name, ns.Name, podsPerStatefulset-2, slack)
 								stss = append(stss, sts)
 							}
 						}
@@ -223,37 +250,65 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 						klog.SetLogger(zapr.NewLogger(logger))
 
 						for t.Loop() {
-							var wg sync.WaitGroup
-							wg.Add(len(stss))
-							for _, sts := range stss {
-								go func() {
-									defer wg.Done()
-									scaleSTS(t, c, sts, int32(podsPerStatefulset))
+							workingPods := make(chan v1.Pod, 1)
+							go func() {
+								defer close(workingPods)
+								allPods := make([]v1.Pod, 0, pods)
+								for _, ns := range nss {
+									podClient := podC.CoreV1().Pods(ns.Name)
+									pods := getPods(t, podClient, nil)
+									allPods = append(allPods, pods.Items...)
+								}
 
-									podClient := c.CoreV1().Pods(sts.Namespace)
-									pods := getPods(t, podClient, sts.Spec.Selector.MatchLabels)
-									setPodsReadyCondition(t, c, &v1.PodList{Items: pods.Items}, v1.ConditionTrue, time.Now())
-								}()
-							}
-							wg.Wait()
-							wg.Add(len(stss))
-							for _, sts := range stss {
+								for _, p := range rand.Perm(len(allPods))[:podsWSS] {
+									workingPods <- allPods[p]
+								}
+							}()
+
+							workers := 50
+							var wgPodChurn sync.WaitGroup
+							wgPodChurn.Add(workers)
+							for i := 0; i < workers; i++ {
 								go func() {
-									defer wg.Done()
-									stsClient := c.AppsV1().StatefulSets(sts.Namespace)
-									if err := wait.PollImmediate(interval*2, 4*timeout, func() (bool, error) {
-										newSts, err := stsClient.Get(t.Context(), sts.Name, metav1.GetOptions{})
-										if err != nil {
-											return false, err
-										}
-										return newSts.Status.Replicas == int32(podsPerStatefulset) && newSts.Status.ReadyReplicas == int32(podsPerStatefulset), nil
-									}); err != nil {
-										t.Errorf("Failed to verify number of Replicas, ReadyReplicas and AvailableReplicas of rs %s to be as expected: %v", sts.Name, err)
+									defer wgPodChurn.Done()
+									for pod := range workingPods {
+										setPodsReadyCondition(t, podC, &v1.PodList{Items: []v1.Pod{pod}}, v1.ConditionTrue, time.Now())
 									}
-									scaleSTS(t, c, sts, 0)
 								}()
 							}
-							wg.Wait()
+
+							scalingUp := make(chan *appsv1.StatefulSet, 1)
+							scalingDown := make(chan *appsv1.StatefulSet, 1)
+							go func() {
+								defer close(scalingUp)
+								for _, i := range rand.Perm(len(stss))[:stsWSS] {
+									sts := stss[i]
+									scalingUp <- sts
+								}
+							}()
+							stsWorkers := 1_000
+							var wgUp, wgDown sync.WaitGroup
+							wgUp.Add(stsWorkers / 2)
+							wgDown.Add(stsWorkers / 2)
+							for i := 0; i < stsWorkers/2; i++ {
+								go func() {
+									defer wgUp.Done()
+									for sts := range scalingUp {
+										scaleSTS(t, c, sts, int32(podsPerStatefulset))
+										scalingDown <- sts
+									}
+								}()
+								go func() {
+									defer wgDown.Done()
+									for sts := range scalingDown {
+										scaleSTS(t, c, sts, int32(podsPerStatefulset)-2)
+									}
+								}()
+							}
+							wgPodChurn.Wait()
+							wgUp.Wait()
+							close(scalingDown)
+							wgDown.Wait()
 						}
 						time.Sleep(time.Second * 10)
 						t.ReportMetric(statefulset.MaxWatchDelay.Seconds(), "max_watch_delay_seconds")
