@@ -180,14 +180,11 @@ func TestSpecReplicasChange(t *testing.T) {
 func BenchmarkStatefulSetScale(t *testing.B) {
 	slack := 500
 	namespaces := 2
-	for _, qps := range []int{1_000} {
-		for _, podsWSS := range []int{0, 20_000, 40_000, 60_000} {
-			for _, statefulsets := range []int{4_000} {
-				for _, stsWSS := range []int{0, 1_000, 2_000} {
-					if podsWSS == 0 && stsWSS == 0 {
-						continue
-					}
-					pods := 120_000
+	for _, qps := range []int{200} {
+		for _, podsWSS := range []int{0, 25_000, 50_000} {
+			for _, statefulsets := range []int{10_000} {
+				for _, stsWSS := range []int{0, 2_500, 5_000} {
+					pods := 100_000
 					stssPerNamespace := statefulsets / namespaces
 					podsPerStatefulset := pods / statefulsets
 					t.Run(fmt.Sprintf("pods=%d,statefulsets=%d,podsPerStatefulset=%d,qps=%d,podsWSS=%d,stsWSS=%d", pods, statefulsets, podsPerStatefulset, qps, podsWSS, stsWSS), func(t *testing.B) {
@@ -243,16 +240,23 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 								stss = append(stss, sts)
 							}
 						}
+						createStart := time.Now()
 						createSTSs(t, c, stss)
 						for _, sts := range stss {
 							waitSTSStable(t, c, sts)
 						}
 						klog.SetLogger(zapr.NewLogger(logger))
 
+						t.Logf("pre loop max_watch_delay=%v, trace_count=%v, effective_qps=%.2f",
+							statefulset.MaxWatchDelay, utiltrace.TraceCount, float64(statefulsets)/time.Since(createStart).Seconds())
+
+						buffer := qps / 2
+
 						for t.Loop() {
-							workingPods := make(chan v1.Pod, 1)
+							readyPods := make(chan v1.Pod, buffer)
+							notReadyPods := make(chan v1.Pod, buffer)
 							go func() {
-								defer close(workingPods)
+								defer close(readyPods)
 								allPods := make([]v1.Pod, 0, pods)
 								for _, ns := range nss {
 									podClient := podC.CoreV1().Pods(ns.Name)
@@ -261,24 +265,32 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 								}
 
 								for _, p := range rand.Perm(len(allPods))[:podsWSS] {
-									workingPods <- allPods[p]
+									readyPods <- allPods[p]
 								}
 							}()
 
-							workers := 50
-							var wgPodChurn sync.WaitGroup
-							wgPodChurn.Add(workers)
-							for i := 0; i < workers; i++ {
+							workers := 2 * qps
+							var wgPodChurnReady, wgPodChurnNotReady sync.WaitGroup
+							wgPodChurnReady.Add(workers / 2)
+							wgPodChurnNotReady.Add(workers / 2)
+							for i := 0; i < workers/2; i++ {
 								go func() {
-									defer wgPodChurn.Done()
-									for pod := range workingPods {
+									defer wgPodChurnReady.Done()
+									for pod := range readyPods {
 										setPodsReadyCondition(t, podC, &v1.PodList{Items: []v1.Pod{pod}}, v1.ConditionTrue, time.Now())
+										notReadyPods <- pod
+									}
+								}()
+								go func() {
+									defer wgPodChurnNotReady.Done()
+									for pod := range notReadyPods {
+										setPodsReadyCondition(t, podC, &v1.PodList{Items: []v1.Pod{pod}}, v1.ConditionFalse, time.Now())
 									}
 								}()
 							}
 
-							scalingUp := make(chan *appsv1.StatefulSet, 1)
-							scalingDown := make(chan *appsv1.StatefulSet, 1)
+							scalingUp := make(chan *appsv1.StatefulSet, buffer)
+							scalingDown := make(chan *appsv1.StatefulSet, buffer)
 							go func() {
 								defer close(scalingUp)
 								for _, i := range rand.Perm(len(stss))[:stsWSS] {
@@ -286,7 +298,7 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 									scalingUp <- sts
 								}
 							}()
-							stsWorkers := 1_000
+							stsWorkers := 2 * qps
 							var wgUp, wgDown sync.WaitGroup
 							wgUp.Add(stsWorkers / 2)
 							wgDown.Add(stsWorkers / 2)
@@ -305,15 +317,18 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 									}
 								}()
 							}
-							wgPodChurn.Wait()
+							wgPodChurnReady.Wait()
+							close(notReadyPods)
 							wgUp.Wait()
 							close(scalingDown)
+							wgPodChurnNotReady.Wait()
 							wgDown.Wait()
 						}
 						time.Sleep(time.Second * 10)
 						t.ReportMetric(statefulset.MaxWatchDelay.Seconds(), "max_watch_delay_seconds")
 						t.ReportMetric(float64(stss[0].Size()), "sts_size_bytes")
 						t.ReportMetric(float64(utiltrace.TraceCount), "trace_count")
+						t.ReportMetric(float64(stsWSS*2+podsWSS*2)/float64(t.Elapsed().Seconds()), "effective_qps")
 					})
 				}
 			}
@@ -520,6 +535,9 @@ func setPodsReadyCondition(t testing.TB, clientSet clientset.Interface, pods *v1
 				continue
 			}
 			readyPods++
+		}
+		if conditionStatus == v1.ConditionFalse {
+			return true, nil
 		}
 		return readyPods >= replicas, nil
 	})
