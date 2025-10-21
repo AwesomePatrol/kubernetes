@@ -22,6 +22,7 @@ import (
 	"math/rand/v2"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -178,12 +179,14 @@ func TestSpecReplicasChange(t *testing.T) {
 
 func BenchmarkStatefulSetScale(t *testing.B) {
 	slack := 500
-	namespaces := 2
-	for _, qps := range []int{200} {
-		for _, podsWSS := range []int{0, 25_000, 50_000} {
-			for _, statefulsets := range []int{10_000} {
-				for _, stsWSS := range []int{0, 2_500, 5_000} {
-					pods := 100_000
+	namespaces := 1
+	qps := 500
+	// 40k pods -> 10.5s max_watch_delay_seconds, 0 traces
+	// 80k pods -> 18.9s max_watch_delay_seconds, 0 traces
+	for _, pods := range []int{50_000} {
+		for _, podsWSS := range []int{pods / 100} { // 1%
+			for _, statefulsets := range []int{2_000} {
+				for _, stsWSS := range []int{statefulsets / 100} { // 1%
 					stssPerNamespace := statefulsets / namespaces
 					podsPerStatefulset := pods / statefulsets
 					t.Run(fmt.Sprintf("pods=%d,statefulsets=%d,podsPerStatefulset=%d,qps=%d,podsWSS=%d,stsWSS=%d", pods, statefulsets, podsPerStatefulset, qps, podsWSS, stsWSS), func(t *testing.B) {
@@ -194,8 +197,6 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 
 						logger := zap.NewNop()
 						klog.SetLogger(zapr.NewLogger(logger))
-
-						time.Sleep(time.Second * 10)
 
 						utiltrace.TraceCount = 0
 
@@ -228,8 +229,6 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 								framework.DeleteNamespaceOrDie(c, ns, t)
 							}
 						}()
-						cancel := runControllerAndInformers(tCtx, rm, informers)
-						defer cancel()
 
 						stss := make([]*appsv1.StatefulSet, 0, namespaces*stssPerNamespace)
 						for _, ns := range nss {
@@ -242,6 +241,10 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 						}
 						createStart := time.Now()
 						createSTSs(t, c, stss)
+
+						cancel := runControllerAndInformers(tCtx, rm, informers)
+						defer cancel()
+
 						for _, sts := range stss {
 							waitSTSStable(t, c, sts)
 						}
@@ -249,6 +252,8 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 
 						t.Logf("pre loop max_watch_delay=%v, trace_count=%v, effective_qps=%.2f",
 							statefulset.MaxWatchDelay, utiltrace.TraceCount, float64(statefulsets)/time.Since(createStart).Seconds())
+						statefulset.MaxWatchDelay = 0
+						atomic.StoreUint64(&utiltrace.TraceCount, 0)
 
 						buffer := qps / 2
 
@@ -269,7 +274,7 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 								}
 							}()
 
-							workers := 2 * qps
+							workers := 100
 							var wgPodChurnReady, wgPodChurnNotReady sync.WaitGroup
 							wgPodChurnReady.Add(workers / 2)
 							wgPodChurnNotReady.Add(workers / 2)
@@ -324,7 +329,6 @@ func BenchmarkStatefulSetScale(t *testing.B) {
 							wgPodChurnNotReady.Wait()
 							wgDown.Wait()
 						}
-						time.Sleep(time.Second * 10)
 						t.ReportMetric(statefulset.MaxWatchDelay.Seconds(), "max_watch_delay_seconds")
 						t.ReportMetric(float64(stss[0].Size()), "sts_size_bytes")
 						t.ReportMetric(float64(utiltrace.TraceCount), "trace_count")
